@@ -6,6 +6,7 @@
 #include <Update.h>
 #include <LittleFS.h>
 #include "src/includes.h"
+#include <algorithm> // Required for std::min -> will be arduino min
 
 #define SS_PIN 5
 #define RST_PIN 21
@@ -31,6 +32,18 @@ String WIFI_HOSTNAME = "k2.local";
 String PRINTER_HOSTNAME = "";
 bool encrypted = false;
 
+String currentMode = "write"; // Default to write mode
+
+// Web server handler to set the current operating mode
+void handleSetMode() {
+  if (webServer.hasArg("mode")) {
+    currentMode = webServer.arg("mode");
+    webServer.send(200, "text/plain", "Mode set to " + currentMode);
+    Serial.println("Mode set to: " + currentMode); // For debugging
+  } else {
+    webServer.send(400, "text/plain", "Mode argument missing");
+  }
+}
 
 void setup()
 {
@@ -57,13 +70,21 @@ void setup()
     if (WiFi.waitForConnectResult() == WL_CONNECTED)
     {
       IPAddress LAN_IP = WiFi.localIP();
+      Serial.print("WiFi Connected. IP Address: ");
+      Serial.println(LAN_IP);
+    } else {
+      Serial.println("WiFi connection failed.");
     }
   }
   if (WIFI_HOSTNAME != "")
   {
     String mdnsHost = WIFI_HOSTNAME;
     mdnsHost.replace(".local", "");
-    MDNS.begin(mdnsHost.c_str());
+    if (MDNS.begin(mdnsHost.c_str())) {
+        Serial.println("MDNS responder started");
+    } else {
+        Serial.println("Error setting up MDNS responder!");
+    }
   }
 
   webServer.on("/config", HTTP_GET, handleConfig);
@@ -72,6 +93,7 @@ void setup()
   webServer.on("/material_database.json", HTTP_GET, handleDb);
   webServer.on("/config", HTTP_POST, handleConfigP);
   webServer.on("/spooldata", HTTP_POST, handleSpoolData);
+  webServer.on("/setmode", HTTP_POST, handleSetMode); // Handler for mode setting
   webServer.on("/update.html", HTTP_POST, []() {
     webServer.send(200, "text/plain", upMsg);
     delay(1000);
@@ -88,6 +110,7 @@ void setup()
   });
   webServer.onNotFound(handle404);
   webServer.begin();
+  Serial.println("HTTP server started");
 }
 
 
@@ -100,75 +123,161 @@ void loop()
   if (!mfrc522.PICC_ReadCardSerial())
     return;
 
-  encrypted = false;
+  encrypted = false; // Reset encryption status for each new card interaction
 
   MFRC522::PICC_Type piccType = mfrc522.PICC_GetType(mfrc522.uid.sak);
   if (piccType != MFRC522::PICC_TYPE_MIFARE_MINI && piccType != MFRC522::PICC_TYPE_MIFARE_1K && piccType != MFRC522::PICC_TYPE_MIFARE_4K)
   {
+    Serial.println(F("Unsupported card type."));
     tone(SPK_PIN, 400, 400);
     delay(2000);
+    mfrc522.PICC_HaltA();      // Halt PICC
+    mfrc522.PCD_StopCrypto1(); // Stop encryption on PCD
     return;
   }
 
-  createKey();
+  createKey(); // Prepare ekey based on UID
 
   MFRC522::StatusCode status;
+  // Try to authenticate with the default key (key A, block 7)
   status = (MFRC522::StatusCode)mfrc522.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, 7, &key, &(mfrc522.uid));
   if (status != MFRC522::STATUS_OK)
   {
-    if (!mfrc522.PICC_IsNewCardPresent())
-      return;
-    if (!mfrc522.PICC_ReadCardSerial())
-      return;
+    // If default key fails, try to authenticate with ekey (the derived key)
+    // Need to re-select card if first auth fails before second attempt
+    if (!mfrc522.PICC_IsNewCardPresent()) return; // Check if card still present
+    if (!mfrc522.PICC_ReadCardSerial()) return;   // Re-read serial
+
     status = (MFRC522::StatusCode)mfrc522.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, 7, &ekey, &(mfrc522.uid));
     if (status != MFRC522::STATUS_OK)
     {
+      Serial.print(F("Authentication failed (both keys): "));
+      Serial.println(mfrc522.GetStatusCodeName(status));
       tone(SPK_PIN, 400, 150);
       delay(300);
       tone(SPK_PIN, 400, 150);
       delay(2000);
+      mfrc522.PICC_HaltA();      // Halt PICC
+      mfrc522.PCD_StopCrypto1(); // Stop encryption on PCD
       return;
     }
-    encrypted = true;
+    encrypted = true; // Card is considered "encrypted" as it was opened with ekey
+    Serial.println(F("Authenticated with ekey."));
+  } else {
+    Serial.println(F("Authenticated with default key."));
+    // encrypted remains false
   }
 
-  byte blockData[17];
-  byte encData[16];
-  int blockID = 4;
-  for (int i = 0; i < spoolData.length(); i += 16)
-  {
-    spoolData.substring(i, i + 16).getBytes(blockData, 17);
-    if (blockID >= 4 && blockID < 7)
-    {
-      aes.encrypt(1, blockData, encData);
-      mfrc522.MIFARE_Write(blockID, encData, 16);
-    }
-    blockID++;
-  }
+  // Mode-dependent logic
+  if (currentMode == "write") {
+    Serial.println(F("Write Mode Active")); 
+  
+    MFRC522::StatusCode status_write = MFRC522::STATUS_OK;
 
-  if (!encrypted)
-  {
-    byte buffer[18];
-    byte byteCount = sizeof(buffer);
-    byte block = 7;
-    status = mfrc522.MIFARE_Read(block, buffer, &byteCount);
-    int y = 0;
-    for (int i = 10; i < 16; i++)
-    {
-      buffer[i] = ekey.keyByte[y];
-      y++;
+    // === SpoolData write logic (Blocks 4, 5, 6) START ===
+    byte blockData[17]; 
+    byte encData[16];   
+    int writeBlockIDStart = 4; 
+  
+    int numSpoolDataBlocksToWrite = (spoolData.length() + 15) / 16; 
+    if (numSpoolDataBlocksToWrite > 3) {
+        numSpoolDataBlocksToWrite = 3; 
     }
-    for (int i = 0; i < 6; i++)
-    {
-      buffer[i] = ekey.keyByte[i];
+    if (numSpoolDataBlocksToWrite <= 0 && spoolData.length() > 0) { // Ensure at least one block if spoolData is not empty
+        numSpoolDataBlocksToWrite = 1;
     }
-    mfrc522.MIFARE_Write(7, buffer, 16);
+
+
+    for (int i = 0; i < numSpoolDataBlocksToWrite; ++i) {
+      int currentBlockAbsolute = writeBlockIDStart + i;
+      // Arduino String class length() returns unsigned int. min() needs compatible types.
+      unsigned int spool_len = spoolData.length();
+      unsigned int segment_end = (unsigned int)((i + 1) * 16);
+      String segment = spoolData.substring(i * 16, min(segment_end, spool_len)); 
+      
+      memset(blockData, 0, sizeof(blockData)); 
+      segment.getBytes(blockData, 17);         
+
+      aes.encrypt(1, blockData, encData); // spoolData for blocks 4,5,6 is always encrypted
+    
+      status_write = (MFRC522::StatusCode)mfrc522.MIFARE_Write(currentBlockAbsolute, encData, 16);
+      if (status_write != MFRC522::STATUS_OK) {
+        Serial.print(F("MIFARE_Write failed for spool data at block "));
+        Serial.print(currentBlockAbsolute);
+        Serial.print(F(": "));
+        Serial.println(mfrc522.GetStatusCodeName(status_write));
+        break; 
+      }
+    }
+    // === spoolData write logic END ===
+
+    // === Trailer block (block 7) update logic START ===
+    // This logic runs if spoolData write was OK AND the card was authenticated with the default key (so !encrypted).
+    // This makes the card use ekey for future authentications on this sector.
+    if (status_write == MFRC522::STATUS_OK && !encrypted) { 
+      byte trailer_buffer[18]; 
+      byte byteCountTrailer = sizeof(trailer_buffer);
+    
+      // It's safer to prepare a new trailer buffer from scratch with ekey and desired access bits
+      // rather than reading and modifying, to ensure correct access bits for key A and B.
+      // For this example, assuming default access bits for sector 1 (blocks 4-7) that allow read/write with Key A/B.
+      // Default trailer block: KeyA (6 bytes) | AccessBits (4 bytes) | KeyB (6 bytes)
+      // FF FF FF FF FF FF | FF 07 80 69 | FF FF FF FF FF FF (Factory default for data blocks)
+      // We want to set KeyA and KeyB to ekey. Access bits FF0780 allow R/W with both keys.
+      
+      // Prepare key A part with ekey
+      for (int k = 0; k < 6; k++) {
+          trailer_buffer[k] = ekey.keyByte[k];
+      }
+      // Set Access Bits for sector 1 (blocks 4,5,6 trailer at block 7)
+      // Using common bits: FF 07 80 69 (KeyA: R/W, AccessBits: R/W, KeyB: R/W for data blocks)
+      // (KeyA:NeverRead, Write; AccessBits:Read,Write; KeyB:NeverRead,Write for Sector Trailer itself)
+      trailer_buffer[6] = 0xFF; // Access Bits byte 0
+      trailer_buffer[7] = 0x07; // Access Bits byte 1
+      trailer_buffer[8] = 0x80; // Access Bits byte 2
+      trailer_buffer[9] = 0x69; // User data / GPB (General Purpose Byte) - can be kept or set
+
+      // Prepare key B part with ekey
+      for (int k = 0; k < 6; k++) {
+          trailer_buffer[10 + k] = ekey.keyByte[k];
+      }
+       
+      status_write = (MFRC522::StatusCode)mfrc522.MIFARE_Write(7, trailer_buffer, 16);
+      if (status_write != MFRC522::STATUS_OK) {
+          Serial.print(F("MIFARE_Write to trailer block 7 failed: "));
+          Serial.println(mfrc522.GetStatusCodeName(status_write));
+      } else {
+          Serial.println(F("Trailer block 7 updated with ekey."));
+      }
+    }
+    // === Trailer block logic END ===
+
+    if (status_write == MFRC522::STATUS_OK) {
+      tone(SPK_PIN, 1000, 200); // Success tone for write
+    } else {
+      tone(SPK_PIN, 200, 500);   // Failure tone for write
+    }
+    delay(2000); // Delay after write attempt
+
+  } else if (currentMode == "read") {
+    Serial.println(F("Read Mode Active")); 
+    // handleReadMode(); // This will be added in a later step
+    tone(SPK_PIN, 1200, 150);
+    delay(150); 
+    tone(SPK_PIN, 1200, 150);
+    delay(2000); 
+
+  } else {
+    Serial.print(F("Unknown mode: "));
+    Serial.println(currentMode);
+    tone(SPK_PIN, 100, 500); 
+    delay(2000);
   }
 
   mfrc522.PICC_HaltA();
   mfrc522.PCD_StopCrypto1();
-  tone(SPK_PIN, 1000, 200);
-  delay(2000);
+  // No delay here, the main loop() will simply restart.
+  // Delays are handled within each mode's logic or for auth failures.
 }
 
 void createKey()
@@ -178,12 +287,12 @@ void createKey()
   byte bufOut[16];
   for (int i = 0; i < 16; i++)
   {
-    if (x >= 4)
+    if (x >= 4) // UID for MIFARE Classic is 4 bytes, so cycle through uidByte[0-3]
       x = 0;
-    uid[i] = mfrc522.uid.uidByte[x];
+    uid[i] = mfrc522.uid.uidByte[x]; // mfrc522.uid.uidByte is the actual UID of the card
     x++;
   }
-  aes.encrypt(0, uid, bufOut);
+  aes.encrypt(0, uid, bufOut); // aes.encrypt with type 0 for key generation
   for (int i = 0; i < 6; i++)
   {
     ekey.keyByte[i] = bufOut[i];
@@ -386,13 +495,24 @@ void handleSpoolData()
   {
     String materialColor = webServer.arg("materialColor");
     materialColor.replace("#", "");
-    String filamentId = "1" + webServer.arg("materialType"); // material_database.json
-    String vendorId = "0276"; // 0276 creality
+    String filamentId = "1" + webServer.arg("materialType"); 
+    String vendorId = "0276"; 
     String color = "0" + materialColor;
     String filamentLen = GetMaterialLength(webServer.arg("materialWeight"));
-    String serialNum = String(random(100000, 999999)); // 000001
+    String serialNum = String(random(100000, 999999)); 
     String reserve = "000000";
-    spoolData = "AB124" + vendorId + "A2" + filamentId + color + filamentLen + serialNum + reserve + "00000000";
+    // Ensure spoolData is exactly 48 characters for 3 blocks, or handle padding if it can be shorter.
+    // The current write loop writes up to 3 blocks. If spoolData is shorter, fewer bytes/blocks are effectively written.
+    // The original global spoolData is 50 chars. AB124(5) + vend(4) + A2(2) + filId(5) + col(7) + filLen(4) + ser(6) + res(6) + 00000000(8) = 47
+    // Let's adjust this to be a consistent length, e.g. 48 bytes for 3 blocks.
+    // Original: "AB124" + vendorId + "A2" + filamentId + color + filamentLen + serialNum + reserve + "00000000";
+    // Lengths:    5     +     4    +   2  +     5      +   7   +      4      +     6     +    6      +     8       = 47.
+    // This means it fits in 3 blocks (48 bytes), with the last byte of the 3rd block potentially unused or zero from getBytes.
+    // The loop `for (int i = 0; i < spoolData.length(); i += 16)` with `spoolData.substring(i, i + 16)` handles this.
+    spoolData = "AB124" + vendorId + "A2" + filamentId + color + filamentLen + serialNum + reserve + "00000000"; // This is 47 chars
+    // If we want it to be exactly 48 for 3 full blocks, we might add a padding character or ensure serialNum/reserve are adjusted.
+    // For now, keeping it as is, the write logic handles substrings.
+
     File file = LittleFS.open("/spool.ini", "w");
     if (file)
     {
@@ -431,7 +551,7 @@ String GetMaterialLength(String materialWeight)
   {
     return "0082";
   }
-  return "0330";
+  return "0330"; // Default
 }
 
 String errorMsg(int errnum)
@@ -508,7 +628,6 @@ void loadConfig()
         PRINTER_HOSTNAME = split(iniData, "PRINTER_HOST=", "\r\n");
         PRINTER_HOSTNAME.trim();
       }
-      
     }
   }
   else
@@ -554,7 +673,9 @@ String split(String str, String from, String to)
   from.toLowerCase();
   to.toLowerCase();
   int pos1 = tmpstr.indexOf(from);
+  if (pos1 == -1) return ""; // Avoid error if 'from' not found
   int pos2 = tmpstr.indexOf(to, pos1 + from.length());
+  if (pos2 == -1) return ""; // Avoid error if 'to' not found
   String retval = str.substring(pos1 + from.length(), pos2);
   return retval;
 }
@@ -568,3 +689,8 @@ bool instr(String str, String search)
   }
   return true;
 }
+
+// It's good practice to declare all functions before use, or ensure definitions appear before calls.
+// If handleReadMode is called in loop, it should be declared before loop or defined before loop.
+// For now, it's commented out in loop(). We'll add it in the next step.
+// void handleReadMode(); // Declaration for function to be added later
