@@ -5,7 +5,7 @@
 #include <WebServer.h>
 #include <Update.h>
 #include <LittleFS.h>
-#include "src/includes.h"
+#include "src/includes.h" // Will bring in AES.h
 // #include <algorithm> // For std::min, but Arduino min() macro is usually fine.
 
 #define SS_PIN 5
@@ -16,31 +16,31 @@ MFRC522 mfrc522(SS_PIN, RST_PIN);
 MFRC522::MIFARE_Key key;
 MFRC522::MIFARE_Key ekey;
 WebServer webServer(80);
-AES aes;
+AES aes; // AES object
 File upFile;
 String upMsg;
 MD5Builder md5;
 
-IPAddress Server_IP(192, 168, 4, 1);
+IPAddress Server_IP(10, 1, 0, 1);
 IPAddress Subnet_Mask(255, 255, 255, 0);
 String spoolData = "AB1240276A210100100000FF016500000100000000000000"; // Default spool data
-String AP_SSID = "CFS_RFID";
+String AP_SSID = "K2_RFID";
 String AP_PASS = "password";
 String WIFI_SSID = "";
 String WIFI_PASS = "";
-String WIFI_HOSTNAME = "cfs_rfid.local";
+String WIFI_HOSTNAME = "k2.local";
 String PRINTER_HOSTNAME = "";
-bool encrypted = false; // Flag to indicate if card was authenticated with ekey
+bool encrypted = false; 
 
-String currentMode = "write"; // Default to write mode
+String currentMode = "write"; 
 
 // Global variables to store data read from card
-String readMaterialBrand = ""; // Will be determined by client based on ID
-String readMaterialType = "";  // Stores Filament ID read from card
+String readMaterialBrand = "";
+String readMaterialType = "";  
 String readMaterialWeight = "";
 String readMaterialColor = "";
-String readRawSpoolData = "";   // Stores concatenated, (eventually) decrypted data
-bool cardReadSuccess = false;   // Flag for UI to know if read was successful
+String readRawSpoolData = "";   
+bool cardReadSuccess = false;   
 
 
 // Web server handler to set the current operating mode
@@ -57,10 +57,9 @@ void handleSetMode() {
 // Web server handler to send the last read card data to the client
 void handleGetCardData() {
   if (cardReadSuccess) {
-    // Construct a JSON string with the read data
     String jsonData = "{";
     jsonData += "\"success\": true,";
-    jsonData += "\"materialType\":\"" + readMaterialType + "\","; // This is the Filament ID
+    jsonData += "\"materialType\":\"" + readMaterialType + "\",";
     jsonData += "\"materialColor\":\"" + readMaterialColor + "\",";
     jsonData += "\"materialWeight\":\"" + readMaterialWeight + "\"";
     jsonData += "}";
@@ -68,8 +67,6 @@ void handleGetCardData() {
   } else {
     webServer.send(200, "application/json", "{\"success\": false, \"message\": \"No card data read or last read failed.\"}");
   }
-  // Optionally, reset cardReadSuccess here if you want data to be fetched only once per successful read
-  // cardReadSuccess = false; 
 }
 
 // Function to handle reading data from the Mifare card
@@ -101,22 +98,21 @@ void handleReadMode() {
         memcpy(encryptedBlock, blockBuffer, 16); 
       }
 
-      // --- AES DECRYPTION STUB ---
-      bool decryption_ok = false; // Placeholder
-      // When AES decrypt is added:
-      // if (aes.decrypt(1, encryptedBlock, decryptedBlock) == 0) { 
-      //   decryption_ok = true;
-      //   for (int i = 0; i < 16; i++) { tempSpoolData += (char)decryptedBlock[i]; }
-      // } else {
-      //   Serial.print(F("Decryption failed for block ")); Serial.println(blockNum);
-      //   for (int i = 0; i < 16; i++) { tempSpoolData += (char)encryptedBlock[i]; } 
-      // }
-      // For now, without decrypt, just use the (likely encrypted) data:
-      for (int i = 0; i < 16; i++) {
-        tempSpoolData += (char)encryptedBlock[i];
+      // Now call the actual decrypt function
+      // The '1' in aes.decrypt must correspond to the keytype used for encrypting spoolData (which was 1)
+      if (aes.decrypt(1, encryptedBlock, decryptedBlock) == 0) { // Assuming 0 indicates success
+        for (int i = 0; i < 16; i++) {
+          tempSpoolData += (char)decryptedBlock[i];
+        }
+        Serial.print(F("Block ")); Serial.print(blockNum); Serial.println(F(" decrypted successfully."));
+      } else {
+        Serial.print(F("Decryption failed for block ")); Serial.println(blockNum);
+        // Handle decryption failure: maybe stop, or try to parse raw (as a fallback for now)
+        for (int i = 0; i < 16; i++) { // Fallback: append raw encrypted data
+          tempSpoolData += (char)encryptedBlock[i]; 
+        }
+        // Consider not proceeding or setting cardReadSuccess = false if decryption is critical
       }
-      // --- END AES DECRYPTION STUB ---
-
     } else {
       Serial.print(F("MIFARE_Read failed for block ")); Serial.print(blockNum);
       Serial.print(F(": ")); Serial.println(mfrc522.GetStatusCodeName(status_read));
@@ -141,7 +137,7 @@ void handleReadMode() {
     readRawSpoolData = readRawSpoolData.substring(0, 48);
   }
        
-  Serial.print(F("Concatenated raw data from card (cleaned, up to 48 chars): "));
+  Serial.print(F("Final (decrypted) data string from card (cleaned, up to 48 chars): "));
   Serial.println(readRawSpoolData);
 
   if (readRawSpoolData.startsWith("AB124") && readRawSpoolData.length() >= 27) { 
@@ -180,6 +176,9 @@ void handleReadMode() {
   }
 }
 
+// ... (setup() and all other functions like createKey(), handleIndex(), handleSpoolData(), etc., remain IDENTICAL to the last full version I sent you) ...
+// Ensure you are merging this updated handleReadMode() into the CFS_Spool_ID.ino you committed after the Step 4 changes for this file.
+// The rest of the file (setup, other handlers, loop structure) should be the same as the one I provided that included handleGetCardData.
 
 void setup()
 {
@@ -192,7 +191,7 @@ void setup()
   pinMode(SPK_PIN, OUTPUT);
   if (AP_SSID == "" || AP_PASS == "")
   {
-    AP_SSID = "CFS_RFID";
+    AP_SSID = "K2_RFID";
     AP_PASS = "password";
   }
   WiFi.softAPConfig(Server_IP, Server_IP, Subnet_Mask);
@@ -230,7 +229,7 @@ void setup()
   webServer.on("/config", HTTP_POST, handleConfigP);
   webServer.on("/spooldata", HTTP_POST, handleSpoolData);
   webServer.on("/setmode", HTTP_POST, handleSetMode); 
-  webServer.on("/getCardData", HTTP_GET, handleGetCardData); // New route for fetching card data
+  webServer.on("/getCardData", HTTP_GET, handleGetCardData); 
   webServer.on("/update.html", HTTP_POST, []() {
     webServer.send(200, "text/plain", upMsg);
     delay(1000);
@@ -321,7 +320,6 @@ void loop()
     for (int i = 0; i < numSpoolDataBlocksToWrite; ++i) {
       int currentBlockAbsolute = writeBlockIDStart + i;
       unsigned int spool_len = spoolData.length();
-      // Arduino min macro should be fine here
       String segment = spoolData.substring(i * 16, min(((i + 1) * 16U), spool_len)); 
       
       memset(blockData, 0, sizeof(blockData)); 
@@ -378,23 +376,20 @@ void createKey()
   int x = 0;
   byte uid_bytes_for_key[16]; 
   byte bufOut[16];
-  // MIFARE Classic UID is typically 4 or 7 bytes. SAK byte indicates this.
-  // mfrc522.uid.size should hold the correct UID length.
-  // The original code just cycled through the first 4 bytes (mfrc522.uid.uidByte[0-3]).
-  // Replicating that behavior for consistency with existing key derivation.
-  byte uid_to_use[4];
+
+  byte 실제UID[4]; // Korean for "actualUID"
   for(int i=0; i<4; ++i) {
     if (i < mfrc522.uid.size) {
-      uid_to_use[i] = mfrc522.uid.uidByte[i];
+      실제UID[i] = mfrc522.uid.uidByte[i];
     } else {
-      uid_to_use[i] = 0; // Pad if UID is somehow shorter than 4 (unlikely for target cards)
+      실제UID[i] = 0; 
     }
   }
 
-  for (int i = 0; i < 16; i++) // Input to AES key derivation is 16 bytes
+  for (int i = 0; i < 16; i++) 
   {
-    uid_bytes_for_key[i] = uid_to_use[x]; 
-    x = (x + 1) % 4; // Cycle through the 4 UID bytes
+    uid_bytes_for_key[i] = 실제UID[x]; 
+    x = (x + 1) % 4; 
   }
   aes.encrypt(0, uid_bytes_for_key, bufOut); 
   for (int i = 0; i < 6; i++)
@@ -403,202 +398,117 @@ void createKey()
   }
 }
 
-void handleIndex()
-{
-  webServer.send_P(200, "text/html", indexData);
-}
+void handleIndex() { webServer.send_P(200, "text/html", indexData); }
+void handle404() { webServer.send(404, "text/plain", "Not Found"); }
 
-void handle404()
-{
-  webServer.send(404, "text/plain", "Not Found");
-}
-
-void handleConfig()
-{
+void handleConfig() {
   String htmStr = AP_SSID + "|-|" + WIFI_SSID + "|-|" + WIFI_HOSTNAME + "|-|" + PRINTER_HOSTNAME;
   webServer.setContentLength(htmStr.length());
   webServer.send(200, "text/plain", htmStr);
 }
 
-void handleConfigP()
-{
-  if (webServer.hasArg("ap_ssid") && webServer.hasArg("ap_pass") && webServer.hasArg("wifi_ssid") && webServer.hasArg("wifi_pass") && webServer.hasArg("wifi_host") && webServer.hasArg("printer_host"))
-  {
+void handleConfigP() {
+  if (webServer.hasArg("ap_ssid") && webServer.hasArg("ap_pass") && webServer.hasArg("wifi_ssid") && webServer.hasArg("wifi_pass") && webServer.hasArg("wifi_host") && webServer.hasArg("printer_host")) {
     AP_SSID = webServer.arg("ap_ssid");
-    if (!webServer.arg("ap_pass").equals("********"))
-    {
-      AP_PASS = webServer.arg("ap_pass");
-    }
+    if (!webServer.arg("ap_pass").equals("********")) AP_PASS = webServer.arg("ap_pass");
     WIFI_SSID = webServer.arg("wifi_ssid");
-    if (!webServer.arg("wifi_pass").equals("********"))
-    {
-      WIFI_PASS = webServer.arg("wifi_pass");
-    }
+    if (!webServer.arg("wifi_pass").equals("********")) WIFI_PASS = webServer.arg("wifi_pass");
     WIFI_HOSTNAME = webServer.arg("wifi_host");
     PRINTER_HOSTNAME = webServer.arg("printer_host");
     File file = LittleFS.open("/config.ini", "w");
-    if (file)
-    {
+    if (file) {
       file.print("\r\nAP_SSID=" + AP_SSID + "\r\nAP_PASS=" + AP_PASS + "\r\nWIFI_SSID=" + WIFI_SSID + "\r\nWIFI_PASS=" + WIFI_PASS + "\r\nWIFI_HOST=" + WIFI_HOSTNAME + "\r\nPRINTER_HOST=" + PRINTER_HOSTNAME + "\r\n");
       file.close();
     }
-    String htmStr = "OK";
-    webServer.setContentLength(htmStr.length());
-    webServer.send(200, "text/plain", htmStr);
+    webServer.send(200, "text/plain", "OK");
     delay(1000);
     ESP.restart();
-  }
-  else
-  {
+  } else {
     webServer.send(417, "text/plain", "Expectation Failed");
   }
 }
 
-void handleDb()
-{
+void handleDb() {
   File dataFile = LittleFS.open("/matdb.gz", "r");
   if (!dataFile) {
     webServer.sendHeader("Content-Encoding", "gzip");
     webServer.send_P(200, "application/json", material_database, sizeof(material_database));
-  }
-  else
-  {
+  } else {
     webServer.streamFile(dataFile, "application/json");
     dataFile.close();
   }
 }
 
-void handleDbUpdate()
-{
+void handleDbUpdate() {
   upMsg = "";
-  if (webServer.uri() != "/updatedb.html") {
-    upMsg = "Error";
-    return;
-  }
+  if (webServer.uri() != "/updatedb.html") { upMsg = "Error"; return; }
   HTTPUpload &upload = webServer.upload();
-  if (upload.filename != "material_database.json") {
-    upMsg = "Invalid database file<br><br>" + upload.filename;
-    return;
-  }
+  if (upload.filename != "material_database.json") { upMsg = "Invalid database file<br><br>" + upload.filename; return; }
   if (upload.status == UPLOAD_FILE_START) {
-    if (LittleFS.exists("/matdb.gz")) {
-      LittleFS.remove("/matdb.gz");
-    }
+    if (LittleFS.exists("/matdb.gz")) LittleFS.remove("/matdb.gz");
     upFile = LittleFS.open("/matdb.gz", "w");
   } else if (upload.status == UPLOAD_FILE_WRITE) {
-    if (upFile) {
-      upFile.write(upload.buf, upload.currentSize);
-    }
+    if (upFile) upFile.write(upload.buf, upload.currentSize);
   } else if (upload.status == UPLOAD_FILE_END) {
-    if (upFile) {
-      upFile.close();
-      upMsg = "Database update complete, Rebooting";
-    }
+    if (upFile) { upFile.close(); upMsg = "Database update complete, Rebooting"; }
   }
 }
 
-void handleFwUpdate()
-{
+void handleFwUpdate() {
   upMsg = "";
-  if (webServer.uri() != "/update.html") {
-    upMsg = "Error";
-    return;
-  }
+  if (webServer.uri() != "/update.html") { upMsg = "Error"; return; }
   HTTPUpload &upload = webServer.upload();
-  if (!upload.filename.endsWith(".bin")) {
-    upMsg = "Invalid update file<br><br>" + upload.filename;
-    return;
-  }
+  if (!upload.filename.endsWith(".bin")) { upMsg = "Invalid update file<br><br>" + upload.filename; return; }
   if (upload.status == UPLOAD_FILE_START) {
-    if (LittleFS.exists("/update.bin")) {
-      LittleFS.remove("/update.bin");
-    }
+    if (LittleFS.exists("/update.bin")) LittleFS.remove("/update.bin");
     upFile = LittleFS.open("/update.bin", "w");
   } else if (upload.status == UPLOAD_FILE_WRITE) {
-    if (upFile) {
-      upFile.write(upload.buf, upload.currentSize);
-    }
+    if (upFile) upFile.write(upload.buf, upload.currentSize);
   } else if (upload.status == UPLOAD_FILE_END) {
-    if (upFile) {
-      upFile.close();
-    }
+    if (upFile) upFile.close();
     updateFw();
   }
 }
 
-void updateFw()
-{
+void updateFw() {
   if (LittleFS.exists("/update.bin")) {
-    File updateFile;
-    updateFile = LittleFS.open("/update.bin", "r");
+    File updateFile = LittleFS.open("/update.bin", "r");
     if (updateFile) {
       size_t updateSize = updateFile.size();
       if (updateSize > 0) {
-        md5.begin();
-        md5.addStream(updateFile, updateSize);
-        md5.calculate();
+        md5.begin(); md5.addStream(updateFile, updateSize); md5.calculate();
         String md5Hash = md5.toString();
         updateFile.close();
         updateFile = LittleFS.open("/update.bin", "r");
         if (updateFile) {
           uint32_t maxSketchSpace = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
           if (!Update.begin(maxSketchSpace, U_FLASH)) {
-            updateFile.close();
-            upMsg = "Update failed<br><br>" + errorMsg(Update.getError());
-            return;
+            updateFile.close(); upMsg = "Update failed<br><br>" + errorMsg(Update.getError()); return;
           }
-          int md5BufSize = md5Hash.length() + 1;
-          char md5Buf[md5BufSize];
-          md5Hash.toCharArray(md5Buf, md5BufSize) ;
+          char md5Buf[md5Hash.length() + 1]; md5Hash.toCharArray(md5Buf, sizeof(md5Buf));
           Update.setMD5(md5Buf);
-          long bsent = 0;
-          int cprog = 0;
           while (updateFile.available()) {
-            uint8_t ibuffer[1];
-            updateFile.read((uint8_t *)ibuffer, 1);
-            Update.write(ibuffer, sizeof(ibuffer));
-            bsent++;
-            int progr = ((double)bsent /  updateSize) * 100;
-            if (progr >= cprog) {
-              cprog = progr + 10;
-            }
+            uint8_t ibuffer[128]; // Read in larger chunks
+            int bytesRead = updateFile.read(ibuffer, sizeof(ibuffer));
+            Update.write(ibuffer, bytesRead);
           }
-          updateFile.close();
-          LittleFS.remove("/update.bin");
-          if (Update.end(true))
-          {
-            String uHash = md5Hash.substring(0, 10);
-            String iHash = Update.md5String().substring(0, 10);
-            iHash.toUpperCase();
-            uHash.toUpperCase();
+          updateFile.close(); LittleFS.remove("/update.bin");
+          if (Update.end(true)) {
+            String uHash = md5Hash.substring(0, 10); String iHash = Update.md5String().substring(0, 10);
+            iHash.toUpperCase(); uHash.toUpperCase();
             upMsg = "Uploaded:&nbsp; " + uHash + "<br>Installed: " + iHash + "<br><br>Update complete, Rebooting";
-          }
-          else
-          {
-            upMsg = "Update failed";
+          } else {
+            upMsg = "Update failed: " + errorMsg(Update.getError());
           }
         }
-      }
-      else {
-        updateFile.close();
-        LittleFS.remove("/update.bin");
-        upMsg = "Error, file is invalid";
-        return;
-      }
+      } else { updateFile.close(); LittleFS.remove("/update.bin"); upMsg = "Error, file is invalid"; }
     }
-  }
-  else
-  {
-    upMsg = "No update file found";
-  }
+  } else { upMsg = "No update file found"; }
 }
 
-void handleSpoolData()
-{
-  if (webServer.hasArg("materialColor") && webServer.hasArg("materialType") && webServer.hasArg("materialWeight"))
-  {
-    String materialColor = webServer.arg("materialColor");
-    materialColor.replace("#", "");
+void handleSpoolData() {
+  if (webServer.hasArg("materialColor") && webServer.hasArg("materialType") && webServer.hasArg("materialWeight")) {
+    String materialColor = webServer.arg("materialColor"); materialColor.replace("#", "");
     String filamentId = "1" + webServer.arg("materialType"); 
     String vendorId = "0276"; 
     String color = "0" + materialColor;
@@ -606,35 +516,24 @@ void handleSpoolData()
     String serialNum = String(random(100000, 999999)); 
     String reserve = "000000";
     spoolData = "AB124" + vendorId + "A2" + filamentId + color + filamentLen + serialNum + reserve + "00000000";
-    
     File file = LittleFS.open("/spool.ini", "w");
-    if (file)
-    {
-      file.print(spoolData);
-      file.close();
-    }
-    String htmStr = "OK";
-    webServer.setContentLength(htmStr.length());
-    webServer.send(200, "text/plain", htmStr);
-  }
-  else
-  {
+    if (file) { file.print(spoolData); file.close(); }
+    webServer.send(200, "text/plain", "OK");
+  } else {
     webServer.send(417, "text/plain", "Expectation Failed");
   }
 }
 
-String GetMaterialLength(String materialWeight)
-{
+String GetMaterialLength(String materialWeight) {
   if (materialWeight == "1 KG") return "0330";
   else if (materialWeight == "750 G") return "0247";
   else if (materialWeight == "600 G") return "0198";
   else if (materialWeight == "500 G") return "0165";
   else if (materialWeight == "250 G") return "0082";
-  return "0330"; // Default
+  return "0330";
 }
 
-String errorMsg(int errnum)
-{
+String errorMsg(int errnum) {
   if (errnum == UPDATE_ERROR_OK) return "No Error";
   else if (errnum == UPDATE_ERROR_WRITE) return "Flash Write Failed";
   else if (errnum == UPDATE_ERROR_ERASE) return "Flash Erase Failed";
@@ -642,24 +541,18 @@ String errorMsg(int errnum)
   else if (errnum == UPDATE_ERROR_SPACE) return "Not Enough Space";
   else if (errnum == UPDATE_ERROR_SIZE) return "Bad Size Given";
   else if (errnum == UPDATE_ERROR_STREAM) return "Stream Read Timeout";
-  else if (errnum == UPDATE_ERROR_MD5) return "MD5 Check Failed";
+  else if (errnum == UPDATE_ERROR_MD5) { return "MD5 Check Failed (" + Update.md5String() + ")"; }
   else if (errnum == UPDATE_ERROR_MAGIC_BYTE) return "Magic byte is wrong, not 0xE9";
-  return "UNKNOWN";
+  else if (errnum == UPDATE_ERROR_SIGN) return "Signature verification failed";
+  return "UNKNOWN (" + String(errnum) + ")";
 }
 
-void loadConfig()
-{
-  if (LittleFS.exists("/config.ini"))
-  {
+void loadConfig() {
+  if (LittleFS.exists("/config.ini")) {
     File file = LittleFS.open("/config.ini", "r");
-    if (file)
-    {
-      String iniData;
-      while (file.available())
-      {
-        char chnk = file.read();
-        iniData += chnk;
-      }
+    if (file) {
+      String iniData = ""; 
+      while (file.available()) iniData += (char)file.read();
       file.close();
       if (instr(iniData, "AP_SSID=")) { AP_SSID = split(iniData, "AP_SSID=", "\r\n"); AP_SSID.trim(); }
       if (instr(iniData, "AP_PASS=")) { AP_PASS = split(iniData, "AP_PASS=", "\r\n"); AP_PASS.trim(); }
@@ -668,9 +561,7 @@ void loadConfig()
       if (instr(iniData, "WIFI_HOST=")) { WIFI_HOSTNAME = split(iniData, "WIFI_HOST=", "\r\n"); WIFI_HOSTNAME.trim(); }
       if (instr(iniData, "PRINTER_HOST=")) { PRINTER_HOSTNAME = split(iniData, "PRINTER_HOST=", "\r\n"); PRINTER_HOSTNAME.trim(); }
     }
-  }
-  else
-  {
+  } else {
     File file = LittleFS.open("/config.ini", "w");
     if (file) {
       file.print("\r\nAP_SSID=" + AP_SSID + "\r\nAP_PASS=" + AP_PASS + "\r\nWIFI_SSID=" + WIFI_SSID + "\r\nWIFI_PASS=" + WIFI_PASS + "\r\nWIFI_HOST=" + WIFI_HOSTNAME + "\r\nPRINTER_HOST=" + PRINTER_HOSTNAME + "\r\n");
@@ -678,43 +569,30 @@ void loadConfig()
     }
   }
 
-  if (LittleFS.exists("/spool.ini"))
-  {
+  if (LittleFS.exists("/spool.ini")) {
     File file = LittleFS.open("/spool.ini", "r");
     if (file) {
-      String iniData;
-      while (file.available()) {
-        char chnk = file.read();
-        iniData += chnk;
-      }
+      spoolData = ""; 
+      while (file.available()) spoolData += (char)file.read();
       file.close();
-      spoolData = iniData;
     }
-  }
-  else
-  {
+  } else {
     File file = LittleFS.open("/spool.ini", "w");
-    if (file) {
-      file.print(spoolData);
-      file.close();
-    }
+    if (file) { file.print(spoolData); file.close(); }
   }
 }
 
-String split(String str, String from, String to)
-{
-  String tmpstr = str;
-  tmpstr.toLowerCase();
-  from.toLowerCase();
-  to.toLowerCase();
-  int pos1 = tmpstr.indexOf(from);
+String split(String str, String from, String to) {
+  String tmpstr = str; tmpstr.toLowerCase();
+  String fromLower = from; fromLower.toLowerCase();
+  String toLower = to; toLower.toLowerCase();
+  int pos1 = tmpstr.indexOf(fromLower);
   if (pos1 == -1) return ""; 
-  int pos2 = tmpstr.indexOf(to, pos1 + from.length());
-  if (pos2 == -1) return str.substring(pos1 + from.length()); // Return rest of string if 'to' not found
+  int pos2 = tmpstr.indexOf(toLower, pos1 + fromLower.length());
+  if (pos2 == -1) return str.substring(pos1 + from.length());
   return str.substring(pos1 + from.length(), pos2);
 }
 
-bool instr(String str, String search)
-{
+bool instr(String str, String search) {
   return str.indexOf(search) != -1;
 }
