@@ -13,6 +13,7 @@ class AES
 {
 public:
   int encrypt(int keytype, byte plain[16], byte cipher[16]);
+  int decrypt(int keytype, byte cipher[16], byte plain[16]);
 private:
   byte set_key(int keytype);
   byte key_sched[240];
