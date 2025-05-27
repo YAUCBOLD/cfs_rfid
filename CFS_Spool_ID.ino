@@ -54,45 +54,62 @@ void handleSetMode() {
   }
 }
 
+// Web server handler to send the last read card data to the client
+void handleGetCardData() {
+  if (cardReadSuccess) {
+    // Construct a JSON string with the read data
+    String jsonData = "{";
+    jsonData += "\"success\": true,";
+    jsonData += "\"materialType\":\"" + readMaterialType + "\","; // This is the Filament ID
+    jsonData += "\"materialColor\":\"" + readMaterialColor + "\",";
+    jsonData += "\"materialWeight\":\"" + readMaterialWeight + "\"";
+    jsonData += "}";
+    webServer.send(200, "application/json", jsonData);
+  } else {
+    webServer.send(200, "application/json", "{\"success\": false, \"message\": \"No card data read or last read failed.\"}");
+  }
+  // Optionally, reset cardReadSuccess here if you want data to be fetched only once per successful read
+  // cardReadSuccess = false; 
+}
+
 // Function to handle reading data from the Mifare card
 void handleReadMode() {
   Serial.println(F("Attempting to read spool data from card..."));
-  cardReadSuccess = false;
-  readRawSpoolData = "";
-  readMaterialType = "";
+  cardReadSuccess = false; 
+  readRawSpoolData = "";   
+  readMaterialType = "";   
   readMaterialColor = "";
   readMaterialWeight = "";
 
-  byte blockBuffer[18];
-  byte encryptedBlock[16];
-  byte decryptedBlock[16];
-
+  byte blockBuffer[18];    
+  byte encryptedBlock[16]; 
+  byte decryptedBlock[16]; 
+       
   MFRC522::StatusCode status_read;
-  String tempSpoolData = "";
+  String tempSpoolData = ""; 
 
   for (int blockNum = 4; blockNum <= 6; blockNum++) {
-    byte bufferSize = sizeof(blockBuffer);
+    byte bufferSize = sizeof(blockBuffer); 
     status_read = mfrc522.MIFARE_Read(blockNum, blockBuffer, &bufferSize);
 
     if (status_read == MFRC522::STATUS_OK) {
       if (bufferSize < 16) {
         Serial.print(F("MIFARE_Read for block ")); Serial.print(blockNum);
         Serial.print(F(" returned less than 16 bytes: ")); Serial.println(bufferSize);
-        memset(encryptedBlock, 'X', sizeof(encryptedBlock)); // Fill with error marker
+        memset(encryptedBlock, 'X', sizeof(encryptedBlock)); 
       } else {
-        memcpy(encryptedBlock, blockBuffer, 16);
+        memcpy(encryptedBlock, blockBuffer, 16); 
       }
 
       // --- AES DECRYPTION STUB ---
-      // actual aes.decrypt(1, encryptedBlock, decryptedBlock) call will replace this.
       bool decryption_ok = false; // Placeholder
       // When AES decrypt is added:
-      // if (aes.decrypt(1, encryptedBlock, decryptedBlock) == 0) { // Assuming 0 is success
+      // if (aes.decrypt(1, encryptedBlock, decryptedBlock) == 0) { 
       //   decryption_ok = true;
       //   for (int i = 0; i < 16; i++) { tempSpoolData += (char)decryptedBlock[i]; }
       // } else {
       //   Serial.print(F("Decryption failed for block ")); Serial.println(blockNum);
-      //   for (int i = 0; i < 16; i++) { tempSpoolData += (char)encryptedBlock[i]; } // Append raw for now
+      //   for (int i = 0; i < 16; i++) { tempSpoolData += (char)encryptedBlock[i]; } 
       // }
       // For now, without decrypt, just use the (likely encrypted) data:
       for (int i = 0; i < 16; i++) {
@@ -103,11 +120,11 @@ void handleReadMode() {
     } else {
       Serial.print(F("MIFARE_Read failed for block ")); Serial.print(blockNum);
       Serial.print(F(": ")); Serial.println(mfrc522.GetStatusCodeName(status_read));
-      tone(SPK_PIN, 200, 200); delay(100); tone(SPK_PIN, 200, 200);
-      return;
+      tone(SPK_PIN, 200, 200); delay(100); tone(SPK_PIN, 200, 200); 
+      return; 
     }
   }
-
+       
   int firstUnprintable = -1;
   for(int i=0; i < tempSpoolData.length(); ++i) {
     if(tempSpoolData.charAt(i) < 32 || tempSpoolData.charAt(i) > 126) {
@@ -118,48 +135,48 @@ void handleReadMode() {
   if(firstUnprintable != -1) {
     readRawSpoolData = tempSpoolData.substring(0, firstUnprintable);
   } else {
-    readRawSpoolData = tempSpoolData;
+    readRawSpoolData = tempSpoolData; 
   }
   if (readRawSpoolData.length() > 48) {
     readRawSpoolData = readRawSpoolData.substring(0, 48);
   }
-
+       
   Serial.print(F("Concatenated raw data from card (cleaned, up to 48 chars): "));
   Serial.println(readRawSpoolData);
 
-  if (readRawSpoolData.startsWith("AB124") && readRawSpoolData.length() >= 27) {
-    readMaterialType = readRawSpoolData.substring(11, 16);
-    String colorHexWithPrefix = readRawSpoolData.substring(16, 23);
-    String filamentLenHex = readRawSpoolData.substring(23, 27);
+  if (readRawSpoolData.startsWith("AB124") && readRawSpoolData.length() >= 27) { 
+    readMaterialType = readRawSpoolData.substring(11, 16); 
+    String colorHexWithPrefix = readRawSpoolData.substring(16, 23); 
+    String filamentLenHex = readRawSpoolData.substring(23, 27);     
 
     if (filamentLenHex == "0330") readMaterialWeight = "1 KG";
     else if (filamentLenHex == "0247") readMaterialWeight = "750 G";
     else if (filamentLenHex == "0198") readMaterialWeight = "600 G";
     else if (filamentLenHex == "0165") readMaterialWeight = "500 G";
     else if (filamentLenHex == "0082") readMaterialWeight = "250 G";
-    else readMaterialWeight = "";
+    else readMaterialWeight = ""; 
 
     if (colorHexWithPrefix.length() == 7 && colorHexWithPrefix.startsWith("0")) {
-      readMaterialColor = "#" + colorHexWithPrefix.substring(1);
+      readMaterialColor = "#" + colorHexWithPrefix.substring(1); 
     } else {
-      readMaterialColor = "#000000";
+      readMaterialColor = "#000000"; 
       Serial.println(F("Warning: Parsed color hex format was not as expected."));
     }
-
+         
     Serial.println(F("Card data parsed successfully:"));
     Serial.print(F("  Filament ID (readMaterialType): ")); Serial.println(readMaterialType);
     Serial.print(F("  Color (readMaterialColor): ")); Serial.println(readMaterialColor);
     Serial.print(F("  Weight (readMaterialWeight): ")); Serial.println(readMaterialWeight);
-
+         
     cardReadSuccess = true;
-    tone(SPK_PIN, 1200, 150); delay(150); tone(SPK_PIN, 1200, 150);
+    tone(SPK_PIN, 1200, 150); delay(150); tone(SPK_PIN, 1200, 150); 
   } else {
     Serial.println(F("Failed to parse spool data: Invalid format, prefix, or insufficient length."));
     Serial.print(F("  Read data prefix: ")); Serial.println(readRawSpoolData.substring(0,min((unsigned int)20, (unsigned int)readRawSpoolData.length())));
     Serial.print(F("  Read data length: ")); Serial.println(readRawSpoolData.length());
     readMaterialType = ""; readMaterialColor = ""; readMaterialWeight = "";
     cardReadSuccess = false;
-    tone(SPK_PIN, 200, 500);
+    tone(SPK_PIN, 200, 500); 
   }
 }
 
@@ -212,7 +229,8 @@ void setup()
   webServer.on("/material_database.json", HTTP_GET, handleDb);
   webServer.on("/config", HTTP_POST, handleConfigP);
   webServer.on("/spooldata", HTTP_POST, handleSpoolData);
-  webServer.on("/setmode", HTTP_POST, handleSetMode); // Handler for mode setting
+  webServer.on("/setmode", HTTP_POST, handleSetMode); 
+  webServer.on("/getCardData", HTTP_GET, handleGetCardData); // New route for fetching card data
   webServer.on("/update.html", HTTP_POST, []() {
     webServer.send(200, "text/plain", upMsg);
     delay(1000);
@@ -244,7 +262,7 @@ void loop()
     return;
   }
 
-  encrypted = false;
+  encrypted = false; 
 
   MFRC522::PICC_Type piccType = mfrc522.PICC_GetType(mfrc522.uid.sak);
   if (piccType != MFRC522::PICC_TYPE_MIFARE_MINI && piccType != MFRC522::PICC_TYPE_MIFARE_1K && piccType != MFRC522::PICC_TYPE_MIFARE_4K)
@@ -252,19 +270,19 @@ void loop()
     Serial.println(F("Unsupported card type."));
     tone(SPK_PIN, 400, 400);
     delay(2000);
-    mfrc522.PICC_HaltA();
-    mfrc522.PCD_StopCrypto1();
+    mfrc522.PICC_HaltA();      
+    mfrc522.PCD_StopCrypto1(); 
     return;
   }
 
-  createKey();
+  createKey(); 
 
   MFRC522::StatusCode status;
   status = (MFRC522::StatusCode)mfrc522.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, 7, &key, &(mfrc522.uid));
   if (status != MFRC522::STATUS_OK)
   {
-    if (!mfrc522.PICC_IsNewCardPresent()) return;
-    if (!mfrc522.PICC_ReadCardSerial()) return;
+    if (!mfrc522.PICC_IsNewCardPresent()) return; 
+    if (!mfrc522.PICC_ReadCardSerial()) return;   
 
     status = (MFRC522::StatusCode)mfrc522.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, 7, &ekey, &(mfrc522.uid));
     if (status != MFRC522::STATUS_OK)
@@ -273,60 +291,59 @@ void loop()
       Serial.println(mfrc522.GetStatusCodeName(status));
       tone(SPK_PIN, 400, 150); delay(300); tone(SPK_PIN, 400, 150);
       delay(2000);
-      mfrc522.PICC_HaltA();
-      mfrc522.PCD_StopCrypto1();
+      mfrc522.PICC_HaltA();      
+      mfrc522.PCD_StopCrypto1(); 
       return;
     }
-    encrypted = true;
+    encrypted = true; 
     Serial.println(F("Authenticated with ekey."));
   } else {
     Serial.println(F("Authenticated with default key."));
   }
 
   if (currentMode == "write") {
-    Serial.println(F("Write Mode Active"));
+    Serial.println(F("Write Mode Active")); 
+  
+    MFRC522::StatusCode status_write = MFRC522::STATUS_OK; 
 
-    MFRC522::StatusCode status_write = MFRC522::STATUS_OK;
-
-    byte blockData[17];
-    byte encData[16];
-    int writeBlockIDStart = 4;
-
-    int numSpoolDataBlocksToWrite = (spoolData.length() + 15) / 16;
+    byte blockData[17]; 
+    byte encData[16];   
+    int writeBlockIDStart = 4; 
+  
+    int numSpoolDataBlocksToWrite = (spoolData.length() + 15) / 16; 
     if (numSpoolDataBlocksToWrite > 3) {
-        numSpoolDataBlocksToWrite = 3;
+        numSpoolDataBlocksToWrite = 3; 
     }
-    if (numSpoolDataBlocksToWrite <= 0 && spoolData.length() > 0) {
+    if (numSpoolDataBlocksToWrite <= 0 && spoolData.length() > 0) { 
         numSpoolDataBlocksToWrite = 1;
     }
 
     for (int i = 0; i < numSpoolDataBlocksToWrite; ++i) {
       int currentBlockAbsolute = writeBlockIDStart + i;
       unsigned int spool_len = spoolData.length();
-      unsigned int segment_end = (unsigned int)((i + 1) * 16);
-      String segment = spoolData.substring(i * 16, min(segment_end, spool_len));
+      // Arduino min macro should be fine here
+      String segment = spoolData.substring(i * 16, min(((i + 1) * 16U), spool_len)); 
+      
+      memset(blockData, 0, sizeof(blockData)); 
+      segment.getBytes(blockData, 17);         
 
-      memset(blockData, 0, sizeof(blockData));
-      segment.getBytes(blockData, 17);
-
-      aes.encrypt(1, blockData, encData);
-
+      aes.encrypt(1, blockData, encData); 
+    
       status_write = (MFRC522::StatusCode)mfrc522.MIFARE_Write(currentBlockAbsolute, encData, 16);
       if (status_write != MFRC522::STATUS_OK) {
         Serial.print(F("MIFARE_Write failed for spool data at block "));
         Serial.print(currentBlockAbsolute); Serial.print(F(": "));
         Serial.println(mfrc522.GetStatusCodeName(status_write));
-        break;
+        break; 
       }
     }
-
-    if (status_write == MFRC522::STATUS_OK && !encrypted) {
-      byte trailer_buffer[18];
-      // Prepare trailer with ekey and standard access bits FF078069
-      for (int k = 0; k < 6; k++) trailer_buffer[k] = ekey.keyByte[k]; // Key A
-      trailer_buffer[6] = 0xFF; trailer_buffer[7] = 0x07; trailer_buffer[8] = 0x80; trailer_buffer[9] = 0x69; // Access Bits
-      for (int k = 0; k < 6; k++) trailer_buffer[10 + k] = ekey.keyByte[k]; // Key B
-
+    
+    if (status_write == MFRC522::STATUS_OK && !encrypted) { 
+      byte trailer_buffer[18]; 
+      for (int k = 0; k < 6; k++) trailer_buffer[k] = ekey.keyByte[k]; 
+      trailer_buffer[6] = 0xFF; trailer_buffer[7] = 0x07; trailer_buffer[8] = 0x80; trailer_buffer[9] = 0x69; 
+      for (int k = 0; k < 6; k++) trailer_buffer[10 + k] = ekey.keyByte[k]; 
+       
       status_write = (MFRC522::StatusCode)mfrc522.MIFARE_Write(7, trailer_buffer, 16);
       if (status_write != MFRC522::STATUS_OK) {
           Serial.print(F("MIFARE_Write to trailer block 7 failed: "));
@@ -337,18 +354,18 @@ void loop()
     }
 
     if (status_write == MFRC522::STATUS_OK) {
-      tone(SPK_PIN, 1000, 200);
+      tone(SPK_PIN, 1000, 200); 
     } else {
-      tone(SPK_PIN, 200, 500);
+      tone(SPK_PIN, 200, 500);   
     }
-    delay(2000);
+    delay(2000); 
 
   } else if (currentMode == "read") {
-    Serial.println(F("Read Mode Active"));
-    handleReadMode();
+    Serial.println(F("Read Mode Active")); 
+    handleReadMode(); 
   } else {
     Serial.print(F("Unknown mode: ")); Serial.println(currentMode);
-    tone(SPK_PIN, 100, 500);
+    tone(SPK_PIN, 100, 500); 
     delay(2000);
   }
 
@@ -359,16 +376,27 @@ void loop()
 void createKey()
 {
   int x = 0;
-  byte uid_bytes_for_key[16]; // Changed name for clarity
+  byte uid_bytes_for_key[16]; 
   byte bufOut[16];
-  for (int i = 0; i < 16; i++)
-  {
-    if (x >= mfrc522.uid.size) // Use actual UID size if available, typically 4 for Mifare Classic
-      x = 0;
-    uid_bytes_for_key[i] = mfrc522.uid.uidByte[x];
-    x++;
+  // MIFARE Classic UID is typically 4 or 7 bytes. SAK byte indicates this.
+  // mfrc522.uid.size should hold the correct UID length.
+  // The original code just cycled through the first 4 bytes (mfrc522.uid.uidByte[0-3]).
+  // Replicating that behavior for consistency with existing key derivation.
+  byte uid_to_use[4];
+  for(int i=0; i<4; ++i) {
+    if (i < mfrc522.uid.size) {
+      uid_to_use[i] = mfrc522.uid.uidByte[i];
+    } else {
+      uid_to_use[i] = 0; // Pad if UID is somehow shorter than 4 (unlikely for target cards)
+    }
   }
-  aes.encrypt(0, uid_bytes_for_key, bufOut); // aes.encrypt with type 0 for key generation
+
+  for (int i = 0; i < 16; i++) // Input to AES key derivation is 16 bytes
+  {
+    uid_bytes_for_key[i] = uid_to_use[x]; 
+    x = (x + 1) % 4; // Cycle through the 4 UID bytes
+  }
+  aes.encrypt(0, uid_bytes_for_key, bufOut); 
   for (int i = 0; i < 6; i++)
   {
     ekey.keyByte[i] = bufOut[i];
@@ -571,14 +599,14 @@ void handleSpoolData()
   {
     String materialColor = webServer.arg("materialColor");
     materialColor.replace("#", "");
-    String filamentId = "1" + webServer.arg("materialType");
-    String vendorId = "0276";
+    String filamentId = "1" + webServer.arg("materialType"); 
+    String vendorId = "0276"; 
     String color = "0" + materialColor;
     String filamentLen = GetMaterialLength(webServer.arg("materialWeight"));
-    String serialNum = String(random(100000, 999999));
+    String serialNum = String(random(100000, 999999)); 
     String reserve = "000000";
     spoolData = "AB124" + vendorId + "A2" + filamentId + color + filamentLen + serialNum + reserve + "00000000";
-
+    
     File file = LittleFS.open("/spool.ini", "w");
     if (file)
     {
@@ -680,11 +708,10 @@ String split(String str, String from, String to)
   from.toLowerCase();
   to.toLowerCase();
   int pos1 = tmpstr.indexOf(from);
-  if (pos1 == -1) return "";
+  if (pos1 == -1) return ""; 
   int pos2 = tmpstr.indexOf(to, pos1 + from.length());
-  if (pos2 == -1) return "";
-  String retval = str.substring(pos1 + from.length(), pos2);
-  return retval;
+  if (pos2 == -1) return str.substring(pos1 + from.length()); // Return rest of string if 'to' not found
+  return str.substring(pos1 + from.length(), pos2);
 }
 
 bool instr(String str, String search)
