@@ -6,7 +6,6 @@
 #include <Update.h>
 #include <LittleFS.h>
 #include "src/includes.h" // Will bring in AES.h
-// #include <algorithm> // For std::min, but Arduino min() macro is usually fine.
 
 #define SS_PIN 5
 #define RST_PIN 21
@@ -98,20 +97,16 @@ void handleReadMode() {
         memcpy(encryptedBlock, blockBuffer, 16); 
       }
 
-      // Now call the actual decrypt function
-      // The '1' in aes.decrypt must correspond to the keytype used for encrypting spoolData (which was 1)
-      if (aes.decrypt(1, encryptedBlock, decryptedBlock) == 0) { // Assuming 0 indicates success
+      if (aes.decrypt(1, encryptedBlock, decryptedBlock) == 0) { 
         for (int i = 0; i < 16; i++) {
           tempSpoolData += (char)decryptedBlock[i];
         }
         Serial.print(F("Block ")); Serial.print(blockNum); Serial.println(F(" decrypted successfully."));
       } else {
         Serial.print(F("Decryption failed for block ")); Serial.println(blockNum);
-        // Handle decryption failure: maybe stop, or try to parse raw (as a fallback for now)
-        for (int i = 0; i < 16; i++) { // Fallback: append raw encrypted data
+        for (int i = 0; i < 16; i++) { 
           tempSpoolData += (char)encryptedBlock[i]; 
         }
-        // Consider not proceeding or setting cardReadSuccess = false if decryption is critical
       }
     } else {
       Serial.print(F("MIFARE_Read failed for block ")); Serial.print(blockNum);
@@ -175,10 +170,6 @@ void handleReadMode() {
     tone(SPK_PIN, 200, 500); 
   }
 }
-
-// ... (setup() and all other functions like createKey(), handleIndex(), handleSpoolData(), etc., remain IDENTICAL to the last full version I sent you) ...
-// Ensure you are merging this updated handleReadMode() into the CFS_Spool_ID.ino you committed after the Step 4 changes for this file.
-// The rest of the file (setup, other handlers, loop structure) should be the same as the one I provided that included handleGetCardData.
 
 void setup()
 {
@@ -377,18 +368,19 @@ void createKey()
   byte uid_bytes_for_key[16]; 
   byte bufOut[16];
 
-  byte 실제UID[4]; // Korean for "actualUID"
+  byte uidForAesKey[4]; 
   for(int i=0; i<4; ++i) {
-    if (i < mfrc522.uid.size) {
-      실제UID[i] = mfrc522.uid.uidByte[i];
+    // mfrc522.uid.size should contain the actual length of the UID (e.g., 4 or 7 bytes)
+    // We are only using the first 4 bytes for this key derivation, matching original apparent behavior.
+    if (i < mfrc522.uid.size && i < 4) { 
+      uidForAesKey[i] = mfrc522.uid.uidByte[i];
     } else {
-      실제UID[i] = 0; 
+      uidForAesKey[i] = 0; // Pad with 0 if UID is somehow shorter than 4
     }
   }
 
-  for (int i = 0; i < 16; i++) 
-  {
-    uid_bytes_for_key[i] = 실제UID[x]; 
+  for (int i = 0; i < 16; i++) { 
+    uid_bytes_for_key[i] = uidForAesKey[x]; 
     x = (x + 1) % 4; 
   }
   aes.encrypt(0, uid_bytes_for_key, bufOut); 
@@ -487,10 +479,15 @@ void updateFw() {
           }
           char md5Buf[md5Hash.length() + 1]; md5Hash.toCharArray(md5Buf, sizeof(md5Buf));
           Update.setMD5(md5Buf);
+          // Use a larger buffer for Update.write for potentially faster updates
+          uint8_t buff[1024];
+          size_t written = 0;
           while (updateFile.available()) {
-            uint8_t ibuffer[128]; // Read in larger chunks
-            int bytesRead = updateFile.read(ibuffer, sizeof(ibuffer));
-            Update.write(ibuffer, bytesRead);
+            int n = updateFile.read(buff, sizeof(buff));
+            if (n > 0) {
+              Update.write(buff, n);
+              written += n;
+            }
           }
           updateFile.close(); LittleFS.remove("/update.bin");
           if (Update.end(true)) {
@@ -543,7 +540,7 @@ String errorMsg(int errnum) {
   else if (errnum == UPDATE_ERROR_STREAM) return "Stream Read Timeout";
   else if (errnum == UPDATE_ERROR_MD5) { return "MD5 Check Failed (" + Update.md5String() + ")"; }
   else if (errnum == UPDATE_ERROR_MAGIC_BYTE) return "Magic byte is wrong, not 0xE9";
-  else if (errnum == UPDATE_ERROR_SIGN) return "Signature verification failed";
+  // else if (errnum == UPDATE_ERROR_SIGN) return "Signature verification failed"; // Commented out
   return "UNKNOWN (" + String(errnum) + ")";
 }
 
