@@ -21,14 +21,14 @@ File upFile;
 String upMsg;
 MD5Builder md5;
 
-IPAddress Server_IP(10, 1, 0, 1);
+IPAddress Server_IP(192, 168, 4, 1);
 IPAddress Subnet_Mask(255, 255, 255, 0);
 String spoolData = "AB1240276A210100100000FF016500000100000000000000"; // Default spool data
-String AP_SSID = "K2_RFID";
+String AP_SSID = "CFS_RFID";
 String AP_PASS = "password";
 String WIFI_SSID = "";
 String WIFI_PASS = "";
-String WIFI_HOSTNAME = "k2.local";
+String WIFI_HOSTNAME = "cfs_rfid.local";
 String PRINTER_HOSTNAME = "";
 bool encrypted = false; // Flag to indicate if card was authenticated with ekey
 
@@ -192,7 +192,7 @@ void setup()
   pinMode(SPK_PIN, OUTPUT);
   if (AP_SSID == "" || AP_PASS == "")
   {
-    AP_SSID = "K2_RFID";
+    AP_SSID = "CFS_RFID";
     AP_PASS = "password";
   }
   WiFi.softAPConfig(Server_IP, Server_IP, Subnet_Mask);
